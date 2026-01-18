@@ -1,7 +1,7 @@
 # vader.py
 A voice activity detetion function for Python
 
-This package provides the voice acitivity detection function for an Wave object.The return value is a vector of logical, each value of which indicates that the frame (10msec by default) is the voice part or not.
+This package provides the voice acitivity detection function for a waveform.The return value is a vector of logical, each value of which indicates that the frame (10 msec by default) is the voice part or not.
 This program is translated from vadeR, a VAD package for R.
 
 ## Example

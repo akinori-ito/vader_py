@@ -4,7 +4,7 @@ import librosa
 import pandas as pd
 
 
-def voice_activity(x, simple=True, minlen=50, maxlen=1000, nclust=4, frameshift=0.01):
+def voice_activity(x, sr=16000, simple=True, minlen=50, maxlen=1000, nclust=4, frameshift=0.01):
     """
     Voice Activity Detection function
     
@@ -37,13 +37,23 @@ def voice_activity(x, simple=True, minlen=50, maxlen=1000, nclust=4, frameshift=
         # hop_length corresponds to frameshift
         hop_length = int(frameshift * sr)
         xf = librosa.feature.mfcc(y=y, sr=sr, hop_length=hop_length).T
+    elif isinstance(x,np.ndarray):
+        if len(x.shape) == 1:
+            # one dimensional array; must be waveform
+            xf = librosa.feature.mfcc(y=x,sr=sr,hop_length=int(frameshift*sr)).T
+        elif len(x.shape) == 2:
+            # two dimensional array: must be MFCC
+            xf = x.T
+        else:
+            raise ValueError("x must be either 1-d or 2-d array")
     else:
-        xf = x
+        raise ValueError("x must be either str or numpy.ndarray")
     
     # Do clustering on the MFCC
-    kmeans = KMeans(n_clusters=nclust, random_state=42, n_init=10)
+    kmeans = KMeans(n_clusters=nclust, random_state=42)
     cls_labels = kmeans.fit_predict(xf)
-    
+    for k in range(len(cls_labels)):
+        print(cls_labels[k],end=" ")
     # Calculate average power for each cluster (using first MFCC coefficient)
     pow = np.zeros(nclust)
     for cl in range(nclust):
@@ -60,7 +70,6 @@ def voice_activity(x, simple=True, minlen=50, maxlen=1000, nclust=4, frameshift=
     # Store frameshift as an attribute (using a custom class if needed)
     # For simplicity, we'll return a tuple (result, frameshift)
     return r, frameshift
-
 
 def vader_simple(cls_labels, i_silent, minlen):
     """
@@ -125,7 +134,6 @@ def vader_simple(cls_labels, i_silent, minlen):
         j += dur_lengths[i]
     
     return seg_valid
-
 
 def vader_heavy(cls_labels, i_silent, minlen, maxlen):
     """
@@ -201,206 +209,6 @@ def vader_heavy(cls_labels, i_silent, minlen, maxlen):
                 v = 1 - v
     
     return r == 1
-
-
-def voice_activity(x, simple=True, minlen=50, maxlen=1000, nclust=4, frameshift=0.01):
-    """
-    Voice Activity Detection function
-    
-    Parameters:
-    -----------
-    x : str or numpy.ndarray
-        Path to wave file or MFCC features matrix
-    simple : bool
-        Use simple or heavy VAD algorithm (default: True)
-    minlen : int
-        Minimum duration of segment (number of frames) (default: 50)
-    maxlen : int
-        Maximum duration of segment (number of frames) (default: 1000)
-    nclust : int
-        Number of clusters, one of which should be silent (default: 4)
-    frameshift : float
-        The frame shift (sec), 10ms by default (default: 0.01)
-    
-    Returns:
-    --------
-    numpy.ndarray
-        A boolean array with length of number of frames. 
-        If the frame is a voice frame, the content is True, otherwise False.
-    """
-    # Check if input is a file path (string) or already MFCC features
-    if isinstance(x, str):
-        # Read wave file and compute MFCC
-        y, sr = librosa.load(x, sr=None)
-        # Compute MFCC features
-        # hop_length corresponds to frameshift
-        hop_length = int(frameshift * sr)
-        xf = librosa.feature.mfcc(y=y, sr=sr, hop_length=hop_length).T
-    else:
-        xf = x
-    
-    # Do clustering on the MFCC
-    kmeans = KMeans(n_clusters=nclust, random_state=42, n_init=10)
-    cls_labels = kmeans.fit_predict(xf)
-    
-    # Calculate average power for each cluster (using first MFCC coefficient)
-    pow = np.zeros(nclust)
-    for cl in range(nclust):
-        pow[cl] = np.mean(xf[cls_labels == cl, 0])
-    
-    # The cluster with the least power should be the silence
-    i_silent = np.argmin(pow)
-    
-    if simple:
-        r = vader_simple(cls_labels, i_silent, minlen)
-    else:
-        r = vader_heavy(cls_labels, i_silent, minlen, maxlen)
-    
-    # Store frameshift as an attribute (using a custom class if needed)
-    # For simplicity, we'll return a tuple (result, frameshift)
-    return r, frameshift
-
-
-def vader_simple(cls_labels, i_silent, minlen):
-    """
-    Simple Voice Activity Detection algorithm
-    
-    Parameters:
-    -----------
-    cls_labels : numpy.ndarray
-        Cluster labels for each frame
-    i_silent : int
-        Index of the silent cluster
-    minlen : int
-        Minimum duration of segment (number of frames)
-    
-    Returns:
-    --------
-    numpy.ndarray
-        Boolean array indicating voice activity
-    """
-    # Run-length encoding
-    dur_lengths = []
-    dur_values = []
-    
-    if len(cls_labels) == 0:
-        return np.array([], dtype=bool)
-    
-    current_val = cls_labels[0]
-    current_len = 1
-    
-    for i in range(1, len(cls_labels)):
-        if cls_labels[i] == current_val:
-            current_len += 1
-        else:
-            dur_lengths.append(current_len)
-            dur_values.append(current_val)
-            current_val = cls_labels[i]
-            current_len = 1
-    
-    # Don't forget the last run
-    dur_lengths.append(current_len)
-    dur_values.append(current_val)
-    
-    nsegment = len(dur_lengths)
-    
-    # Fix short silent segments
-    for i in range(nsegment):
-        if dur_lengths[i] < minlen and dur_values[i] == i_silent:
-            if i == 0:
-                dur_values[i] = dur_values[i + 1]
-            elif dur_values[i] != dur_values[i - 1]:
-                dur_values[i] = dur_values[i - 1]
-    
-    # Create validity array
-    seg_valid = np.zeros(len(cls_labels), dtype=bool)
-    j = 0
-    
-    for i in range(nsegment):
-        if dur_values[i] == i_silent:
-            seg_valid[j:j + dur_lengths[i]] = False
-        else:
-            seg_valid[j:j + dur_lengths[i]] = True
-        j += dur_lengths[i]
-    
-    return seg_valid
-
-
-def vader_heavy(cls_labels, i_silent, minlen, maxlen):
-    """
-    Heavy Voice Activity Detection algorithm using dynamic programming
-    
-    Parameters:
-    -----------
-    cls_labels : numpy.ndarray
-        Cluster labels for each frame
-    i_silent : int
-        Index of the silent cluster
-    minlen : int
-        Minimum duration of segment (number of frames)
-    maxlen : int
-        Maximum duration of segment (number of frames)
-    
-    Returns:
-    --------
-    numpy.ndarray
-        Boolean array indicating voice activity
-    """
-    # Cluster decision: 1=silence, 2=non-silence (converted to 0-based indexing)
-    y = (cls_labels != i_silent).astype(int) + 1
-    
-    n = len(y)
-    
-    # DP array to calculate minimum distance
-    w = np.full((n, maxlen, 2), np.inf)
-    b = np.zeros((n, 2), dtype=int)
-    
-    w[0, 0, 0] = abs(y[0] - 1)
-    w[0, 0, 1] = abs(y[0] - 2)
-    b[0, 0] = 0
-    b[0, 1] = 0
-    
-    for i in range(1, n):
-        if i >= minlen:
-            for v in range(2):
-                err = abs(y[i] - (v + 1))
-                # 1-v means "the other one"
-                other_v = 1 - v
-                # m is the optimum length of the previous segment
-                m = np.argmin(w[i - 1, minlen - 1:maxlen, other_v]) + minlen
-                w[i, 0, v] = err + w[i - 1, m - 1, other_v]
-                b[i, v] = m
-        
-        for v in range(2):
-            err = abs(y[i] - (v + 1))
-            for j in range(1, maxlen):
-                w[i, j, v] = w[i - 1, j - 1, v] + err
-    
-    # Backtrace
-    j1 = np.argmin(w[n - 1, :, 0])
-    j2 = np.argmin(w[n - 1, :, 1])
-    
-    if w[n - 1, j1, 0] < w[n - 1, j2, 1]:
-        j = j1
-        v = 0
-    else:
-        j = j2
-        v = 1
-    
-    r = np.zeros(n, dtype=int)
-    i = n - 1
-    
-    while i >= 0:
-        r[i] = v
-        i -= 1
-        j -= 1
-        if j < 0:
-            if i >= 0:
-                j = b[i + 1, v] - 1
-                v = 1 - v
-    
-    return r == 1
-
 
 def voice_segment(x, unit="frame", frameshift=0.01, margin=0):
     """
@@ -504,11 +312,7 @@ def voice_segment(x, unit="frame", frameshift=0.01, margin=0):
 
 # Example usage:
 if __name__ == "__main__":
-    # Example with a wave file
-    # result, fs = voice_activity("speech.wav")
-    # print(f"Voice activity detected: {result}")
-    # print(f"Frame shift: {fs}")
-    
-    # Example with custom parameters
-    # result, fs = voice_activity("speech.wav", simple=True, minlen=30, nclust=3)
-    pass
+    w,sr = librosa.load("test.wav")
+    va, frameshift = voice_activity(w,sr=sr,nclust=3,minlen=3)
+    seg = voice_segment(va)
+    print(seg)

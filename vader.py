@@ -1,10 +1,29 @@
 import numpy as np
 from sklearn.cluster import KMeans
+from scipy.cluster.hierarchy import linkage, fcluster
 import librosa
 import pandas as pd
 
+def small_mean_cluster_indices(x):
+    x = np.asarray(x)
 
-def voice_activity(x, sr=16000, simple=True, minlen=50, maxlen=1000, nclust=4, frameshift=0.01):
+    # 階層的クラスタリング（1次元なので距離はそのまま）
+    Z = linkage(x.reshape(-1, 1), method='ward')
+
+    # 2 クラスタに分割
+    labels = fcluster(Z, 2, criterion='maxclust')
+
+    # 各クラスタの平均値
+    means = {c: x[labels == c].mean() for c in np.unique(labels)}
+
+    # 平均が小さいクラスタ番号
+    small_cluster = min(means, key=means.get)
+
+    # そのクラスタに属するインデックスを返す
+    return np.where(labels == small_cluster)[0]
+
+
+def voice_activity(x, sr=16000, simple=True, minlen=50, maxlen=1000, nclust=8, frameshift=0.01):
     """
     Voice Activity Detection function
     
@@ -52,24 +71,25 @@ def voice_activity(x, sr=16000, simple=True, minlen=50, maxlen=1000, nclust=4, f
     # Do clustering on the MFCC
     kmeans = KMeans(n_clusters=nclust, random_state=42)
     cls_labels = kmeans.fit_predict(xf)
-    for k in range(len(cls_labels)):
-        print(cls_labels[k],end=" ")
+    #for k in range(len(cls_labels)):
+    #    print(cls_labels[k],end=" ")
     # Calculate average power for each cluster (using first MFCC coefficient)
     pow = np.zeros(nclust)
     for cl in range(nclust):
         pow[cl] = np.mean(xf[cls_labels == cl, 0])
     
+    silent_clusters = small_mean_cluster_indices(pow)
     # The cluster with the least power should be the silence
-    i_silent = np.argmin(pow)
-    
+    is_silent = [0 if x in silent_clusters else 1 for x in cls_labels]
+    is_silent = np.array(is_silent)
     if simple:
-        r = vader_simple(cls_labels, i_silent, minlen)
+        r = vader_simple(is_silent, 0, minlen)
     else:
-        r = vader_heavy(cls_labels, i_silent, minlen, maxlen)
+        r = vader_heavy(is_silent, 0, minlen, maxlen)
     
     # Store frameshift as an attribute (using a custom class if needed)
     # For simplicity, we'll return a tuple (result, frameshift)
-    return r, frameshift
+    return r, frameshift, cls_labels
 
 def vader_simple(cls_labels, i_silent, minlen):
     """
@@ -312,7 +332,16 @@ def voice_segment(x, unit="frame", frameshift=0.01, margin=0):
 
 # Example usage:
 if __name__ == "__main__":
-    w,sr = librosa.load("test.wav")
-    va, frameshift = voice_activity(w,sr=sr,nclust=3,minlen=3)
-    seg = voice_segment(va)
-    print(seg)
+    import matplotlib.pyplot as plt
+    from pathlib import Path
+    for path in Path('D:/Biosono3/wavfiles/0C83A664-A60B-4CE1-B849-6E1AEFC4E434').glob('*.wav'):
+        w,sr = librosa.load(path)
+        va, frameshift, cls = voice_activity(w,sr=sr,nclust=5,minlen=50,simple=False)
+        seg = voice_segment(va)
+        fig, axes = plt.subplots(2,1,figsize=(12,8))
+        ccol = np.repeat(cls,int(sr*frameshift))
+        axes[0].scatter(np.linspace(0,len(w)/sr,len(w)),w,c=ccol[:len(w)],cmap='tab10',s=1)
+        axes[1].plot(va)
+        fig.suptitle(path)
+        plt.tight_layout()
+        plt.show()

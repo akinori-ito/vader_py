@@ -12,7 +12,7 @@ def small_mean_cluster_indices(x,n):
     n_all = np.sum(n)
     n = n/n_all
     max_i = np.argmax(x)
-    while n[max_i] < 0.025:
+    while n[max_i] < 0.05:
         masked = np.where(x >= 1.0, -np.inf, x) 
         max_i = np.argmax(masked)
         maxx = x[max_i]
@@ -21,7 +21,7 @@ def small_mean_cluster_indices(x,n):
         print("Cluster ",i,": power=",x[i]," frames=",n[i])
 
     # そのクラスタに属するインデックスを返す
-    return np.where(x < 0.3)[0]
+    return np.where(x < 0.2)[0]
 
 
 def voice_activity(x, sr=16000, simple=True, minlen=50, maxlen=1000, nclust=8, frameshift=0.01):

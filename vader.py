@@ -4,23 +4,24 @@ from scipy.cluster.hierarchy import linkage, fcluster
 import librosa
 import pandas as pd
 
-def small_mean_cluster_indices(x):
+def small_mean_cluster_indices(x,n):
     x = np.asarray(x)
-
-    # 階層的クラスタリング（1次元なので距離はそのまま）
-    Z = linkage(x.reshape(-1, 1), method='ward')
-
-    # 2 クラスタに分割
-    labels = fcluster(Z, 2, criterion='maxclust')
-
-    # 各クラスタの平均値
-    means = {c: x[labels == c].mean() for c in np.unique(labels)}
-
-    # 平均が小さいクラスタ番号
-    small_cluster = min(means, key=means.get)
+    minx = np.min(x)
+    maxx = np.max(x)
+    x = (x-minx)/(maxx-minx)
+    n_all = np.sum(n)
+    n = n/n_all
+    max_i = np.argmax(x)
+    while n[max_i] < 0.025:
+        masked = np.where(x >= 1.0, -np.inf, x) 
+        max_i = np.argmax(masked)
+        maxx = x[max_i]
+        x = x/maxx       
+    for i in range(len(x)):
+        print("Cluster ",i,": power=",x[i]," frames=",n[i])
 
     # そのクラスタに属するインデックスを返す
-    return np.where(labels == small_cluster)[0]
+    return np.where(x < 0.3)[0]
 
 
 def voice_activity(x, sr=16000, simple=True, minlen=50, maxlen=1000, nclust=8, frameshift=0.01):
@@ -75,10 +76,13 @@ def voice_activity(x, sr=16000, simple=True, minlen=50, maxlen=1000, nclust=8, f
     #    print(cls_labels[k],end=" ")
     # Calculate average power for each cluster (using first MFCC coefficient)
     pow = np.zeros(nclust)
+    nframe = np.zeros(nclust)
     for cl in range(nclust):
-        pow[cl] = np.mean(xf[cls_labels == cl, 0])
+        ind = cls_labels==cl
+        pow[cl] = np.mean(xf[ind, 0])
+        nframe[cl] = np.sum(ind)
     
-    silent_clusters = small_mean_cluster_indices(pow)
+    silent_clusters = small_mean_cluster_indices(pow,nframe)
     # The cluster with the least power should be the silence
     is_silent = [0 if x in silent_clusters else 1 for x in cls_labels]
     is_silent = np.array(is_silent)
@@ -334,13 +338,22 @@ def voice_segment(x, unit="frame", frameshift=0.01, margin=0):
 if __name__ == "__main__":
     import matplotlib.pyplot as plt
     from pathlib import Path
-    for path in Path('D:/Biosono3/wavfiles/0C83A664-A60B-4CE1-B849-6E1AEFC4E434').glob('*.wav'):
+    import random
+    files = [str(p) for p in Path('../DA031283-A22D-4DFA-9D13-F2CBDA2E31E6').glob('*.wav')]
+    random.shuffle(files)
+    for path in files:
         w,sr = librosa.load(path)
-        va, frameshift, cls = voice_activity(w,sr=sr,nclust=5,minlen=50,simple=False)
+        va, frameshift, cls = voice_activity(w,sr=sr,nclust=6,minlen=100,simple=False)
         seg = voice_segment(va)
         fig, axes = plt.subplots(2,1,figsize=(12,8))
         ccol = np.repeat(cls,int(sr*frameshift))
-        axes[0].scatter(np.linspace(0,len(w)/sr,len(w)),w,c=ccol[:len(w)],cmap='tab10',s=1)
+        t = np.linspace(0,len(w)/sr,len(w))
+        if len(w)> 5000:
+            ind = sorted(random.sample(range(len(w)),5000))
+            t = t[ind]
+            w = w[ind]
+            ccol = ccol[ind]
+        axes[0].scatter(t,w,c=ccol[:len(w)],cmap='tab10',s=1)
         axes[1].plot(va)
         fig.suptitle(path)
         plt.tight_layout()
